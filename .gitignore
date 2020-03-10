@@ -1,0 +1,5 @@
+# IGNORE PYCHARM DIRECTORIES
+
+/.idea/*
+
+/venv/*
