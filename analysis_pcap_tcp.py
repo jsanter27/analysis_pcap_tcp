@@ -27,12 +27,17 @@ flow_count = 0
 
 
 class Flow:
+
     def __init__(self, flow_id, sender_port, receiver_port):
         self.flow_id = flow_id
         self.sender_port = sender_port
         self.receiver_port = receiver_port
+        self.total_data = 0
+        self.start_time = 0
+        self.end_time = 0
         self.throughput = 0
         self.transactions = []
+        self.handshake = False
         return
 
     def add_transaction(self, transaction):
@@ -40,16 +45,44 @@ class Flow:
         self.transactions.append(transaction)
         return
 
+    def handshake_done(self):
+        self.handshake = True
+
+    def increase_data(self, amt):
+        self.total_data += amt
+
+    def set_start(self, time):
+        self.start_time = time
+
+    def set_end(self, time):
+        self.end_time = time
+
+    def calculate_throughput(self):
+        time = self.end_time - self.start_time
+        self.throughput = float(self.total_data) / float(time)
+
     def __str__(self):
         """String Representation of Flow with first two Transactions"""
         trans_str = ""
         for i in range(2):
-            trans_str = trans_str + "Transaction " + str(i + 1) + ": " \
+            trans_str = trans_str + "Transaction " + str(i + 1) + ":\n" \
                         + str(self.transactions[i]) + "\n"
-        return "Flow " + str(self.flow_id) + ": \n" + trans_str + "Throughput: " + str(self.throughput) + "\n"
+        return "Flow " + str(self.flow_id) + ": \n" + trans_str + "Throughput: " + str(self.throughput) + " bytes/sec\n"
 
 
 class Transaction:
+    def __init__(self, sent_pkt, recv_pkt=None):
+        self.sent_pkt = sent_pkt
+        self.recv_pkt = recv_pkt
+
+    def receive_pkt(self, pkt):
+        self.recv_pkt = pkt
+
+    def __str__(self):
+        return "SENT: " + str(self.sent_pkt) + "\nRECV: " + str(self.recv_pkt)
+
+
+class Packet:
     def __init__(self, seq, ack, rwnd=0):
         self.seq = seq
         self.ack = ack
@@ -79,7 +112,7 @@ def get_flags(buffer):
     flag = buffer[47]
     flag_list = []
     if flag & FIN_FLAG == FIN_FLAG:
-        flag_list.append(ACK)
+        flag_list.append(FIN)
     if flag & SYN_FLAG == SYN_FLAG:
         flag_list.append(SYN)
     if flag & RST_FLAG == RST_FLAG:
@@ -98,7 +131,7 @@ def analysis_pcap_tcp(file_path):
 
     global flow_count
     flow_list = []
-    # pkt_amt = 0
+    seq_map = {}
     for timestamp, buffer in pcap:
         protocol = buffer[23]
         if protocol != TCP:
@@ -119,9 +152,10 @@ def analysis_pcap_tcp(file_path):
         flags = get_flags(buffer)
         if SYN in flags and ACK not in flags:
             flow_count += 1
-            flow_list.append(Flow(flow_count, src_port, dst_port))
-            continue
-        elif SYN in flags and ACK in flags:
+            new_flow = Flow(flow_count, src_port, dst_port)
+            flow_list.append(new_flow)
+            new_flow.set_start(timestamp)
+            new_flow.increase_data(len(buffer))
             continue
 
         current_flow = None
@@ -131,9 +165,31 @@ def analysis_pcap_tcp(file_path):
         if current_flow is None:
             continue
 
+        if src_port == current_flow.sender_port:
+            current_flow.increase_data(len(buffer))
+
+        if SYN in flags and ACK in flags:
+            continue
+        elif src_port == current_flow.sender_port and ACK in flags and not current_flow.handshake:
+            current_flow.handshake_done()
+            continue
+        elif src_port == current_flow.sender_port and FIN in flags:
+            current_flow.set_end(timestamp)
+            current_flow.calculate_throughput()
+
         seq = buffer[38:42]
         ack = buffer[42:46]
-        current_flow.add_transaction(Transaction(seq, ack))
+        if src_port == current_flow.sender_port:
+            payload_size = len(buffer[66:])
+            pkt = Packet(seq, ack)
+            transaction = Transaction(pkt)
+            seq_map[payload_size + int.from_bytes(seq, "big")] = transaction
+            current_flow.add_transaction(transaction)
+        elif src_port == current_flow.receiver_port:
+            transaction = seq_map.get(int.from_bytes(ack, "big"), None)
+            if transaction is None:
+                continue
+            transaction.receive_pkt(Packet(seq, ack))
 
     print("Number of Flows: " + str(flow_count) + "\n")
     for i in flow_list:
