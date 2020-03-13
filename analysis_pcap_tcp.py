@@ -137,7 +137,30 @@ def main(argc, argv):
     else:
         file_path = argv[1]
 
-    analysis_pcap_tcp(file_path)
+    flow_list = analysis_pcap_tcp(file_path)
+
+    # PRINT PART A
+    print("PART A\n")
+
+    print("Number of flows: " + str(len(flow_list)) + "\n")
+    for i in flow_list:
+        print(i)
+
+    # PRINT PART B
+    print("\nPART B\n")
+
+    for flow in flow_list:
+        window = 1
+        print("Flow " + str(flow.flow_id) + ": (" + str(int.from_bytes(flow.sender_port, "big")) + " -> "
+              + str(int.from_bytes(flow.receiver_port, "big")) + ")")
+        for i in range(5):
+            if flow.cwnd_list[i] is None:
+                break
+            print("CWND " + str(window) + ": " + str(flow.cwnd_list[i]))
+            window += 1
+        print("Retransmissions from Triple Duplicate ACKs: " + str(flow.fast_retransmissions))
+        print("Retransmissions from Timeouts: " + str(flow.retransmissions))
+        print()
 
     return
 
@@ -279,32 +302,9 @@ def analysis_pcap_tcp(file_path):
 
             transaction.receive_pkt(Packet(seq, ack, rwnd))
 
-    # PRINT PART A
-    print("PART A\n")
-
-    print("Number of flows: " + str(len(flow_list)) + "\n")
-    for i in flow_list:
-        print(i)
-
-    # PRINT PART B
-    print("\nPART B\n")
-
-    for flow in flow_list:
-        window = 1
-        print("Flow " + str(flow.flow_id) + ": (" + str(int.from_bytes(flow.sender_port, "big")) + " -> "
-              + str(int.from_bytes(flow.receiver_port, "big")) + ")")
-        for i in range(5):
-            if flow.cwnd_list[i] is None:
-                break
-            print("CWND " + str(window) + ": " + str(flow.cwnd_list[i]))
-            window += 1
-        print("Retransmissions from Triple Duplicate ACKs: " + str(flow.fast_retransmissions))
-        print("Retransmissions from Timeouts: " + str(flow.retransmissions))
-        print()
-
     # CLOSE FILE AND RETURN
     file.close()
-    return
+    return flow_list
 
 
 if __name__ == "__main__":
