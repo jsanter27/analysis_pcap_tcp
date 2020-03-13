@@ -34,7 +34,12 @@ class Flow:
         self.end_time = 0
         self.throughput = 0
         self.window_scale = 0
+        self.rtt = 0
+        self.next_expected_rtt = 0
+        self.packets_per_rtt = 0
+        self.last_timestamp = 0
         self.transactions = []
+        self.cwnd_list = []
         self.handshake = False
         return
 
@@ -61,6 +66,20 @@ class Flow:
 
     def set_window_scale(self, scale):
         self.window_scale = scale
+
+    def calculate_rtt(self, time):
+        # CALL WHEN SYN ACK RECEIVED
+        self.rtt = time - self.start_time
+        self.next_expected_rtt = time + self.rtt
+
+    def increment_ppr(self):
+        self.packets_per_rtt += 1
+
+    def reset_ppr(self):
+        self.packets_per_rtt = 1
+
+    def next_rtt(self):
+        self.next_expected_rtt += self.rtt
 
     def __str__(self):
         """String Representation of Flow with first two Transactions"""
@@ -171,7 +190,7 @@ def analysis_pcap_tcp(file_path):
             new_flow = Flow(len(flow_list)+1, src_port, dst_port)
             flow_list.append(new_flow)
             new_flow.set_start(timestamp)
-            new_flow.increase_data(len(buffer))
+            new_flow.increase_data(len(buffer[34:]))
             new_flow.set_window_scale(buffer[73])
             continue
 
@@ -183,21 +202,34 @@ def analysis_pcap_tcp(file_path):
         if current_flow is None:
             continue
 
-        # IF SENDER PACKET, INCREASE THE TOTAL DATA SENT BY SENDER
-        if src_port == current_flow.sender_port:
-            current_flow.increase_data(len(buffer))
-
         # PART OF HANDSHAKE, SKIP PACKET
         if SYN in flags and ACK in flags:
+            current_flow.calculate_rtt(timestamp)
             continue
         # ENDS THE HANDSHAKE AND SKIPS
         elif src_port == current_flow.sender_port and ACK in flags and not current_flow.handshake:
+            current_flow.increase_data(len(buffer[34:]))
             current_flow.handshake_done()
             continue
         # IF FIN PACKET FROM SENDER, CALCULATES THROUGHPUT
         elif src_port == current_flow.sender_port and FIN in flags:
+            current_flow.increase_data(len(buffer[34:]))
             current_flow.set_end(timestamp)
             current_flow.calculate_throughput()
+
+        # IF SENDER PACKET, INCREASE THE TOTAL DATA SENT BY SENDER
+        if src_port == current_flow.sender_port:
+            current_flow.increase_data(len(buffer[34:]))
+
+            # FOR CALCULATING CWND
+            # if current_flow.flow_id == 1:
+            #    print(str(timestamp) + " VS " + str(current_flow.next_expected_rtt))
+            if timestamp > current_flow.next_expected_rtt:
+                current_flow.cwnd_list.append(current_flow.packets_per_rtt)
+                current_flow.reset_ppr()
+                current_flow.next_rtt()
+            else:
+                current_flow.increment_ppr()
 
         # GETS SEQ AND ACK VALUES, CALCULATES RWND
         seq = int.from_bytes(buffer[38:42], "big")
@@ -218,10 +250,26 @@ def analysis_pcap_tcp(file_path):
                 continue
             transaction.receive_pkt(Packet(seq, ack, rwnd))
 
-    # PRINT RESULTS
-    print("Number of Flows: " + str(len(flow_list)) + "\n")
+    # PRINT PART A
+    print("PART A\n")
+
+    print("Number of flows: " + str(len(flow_list)) + "\n")
     for i in flow_list:
         print(i)
+
+    # PRINT PART B
+    print("\nPART B\n")
+
+    print("Estimations of first 5 (or less) congestion windows for each flow:\n")
+    for flow in flow_list:
+        window = 1
+        print("Flow " + str(flow.flow_id) + ": ")
+        for i in range(5):
+            if flow.cwnd_list[i] is None:
+                break
+            print("CWND " + str(window) + ": " + str(flow.cwnd_list[i]))
+            window += 1
+        print()
 
     # CLOSE FILE AND RETURN
     file.close()
