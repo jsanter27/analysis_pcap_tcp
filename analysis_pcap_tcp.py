@@ -22,6 +22,7 @@ PSH = "PSH"
 ACK_FLAG = 0x10
 ACK = "ACK"
 
+retransmission_count = 0
 
 class Flow:
 
@@ -128,8 +129,8 @@ class Packet:
 
 def main(argc, argv):
     if argc == 1:
-        # file_path = input("Enter the path of the .pcap file: ")
-        file_path = "assignment2.pcap"
+        file_path = input("Enter the path of the .pcap file: ")
+        print()
     elif argc > 2:
         print("Invalid Arguments: analysis_pcap_tcp [filepath]")
         return
@@ -161,6 +162,7 @@ def get_flags(buffer):
 
 def analysis_pcap_tcp(file_path):
     """Runs analysis on PCAP File"""
+    global retransmission_count
     # OPEN FILE
     try:
         file = open(file_path, 'rb')
@@ -235,8 +237,6 @@ def analysis_pcap_tcp(file_path):
             current_flow.increase_data(len(buffer[34:]))
 
             # FOR CALCULATING CWND
-            # if current_flow.flow_id == 1:
-            #    print(str(timestamp) + " VS " + str(current_flow.next_expected_rtt))
             if timestamp > current_flow.next_expected_rtt:
                 current_flow.cwnd_list.append(current_flow.packets_per_rtt)
                 current_flow.reset_ppr()
@@ -292,7 +292,7 @@ def analysis_pcap_tcp(file_path):
     for flow in flow_list:
         window = 1
         print("Flow " + str(flow.flow_id) + ": (" + str(int.from_bytes(flow.sender_port, "big")) + " -> "
-              + str(int.from_bytes(flow.receiver_port, "big")))
+              + str(int.from_bytes(flow.receiver_port, "big")) + ")")
         for i in range(5):
             if flow.cwnd_list[i] is None:
                 break
@@ -301,9 +301,6 @@ def analysis_pcap_tcp(file_path):
         print("Retransmissions from Triple Duplicate ACKs: " + str(flow.fast_retransmissions))
         print("Retransmissions from Timeouts: " + str(flow.retransmissions))
         print()
-
-    # for i in seq_map:
-        # print(seq_map.get(i, None))
 
     # CLOSE FILE AND RETURN
     file.close()
