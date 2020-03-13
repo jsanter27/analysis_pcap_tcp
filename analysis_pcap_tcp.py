@@ -38,6 +38,8 @@ class Flow:
         self.next_expected_rtt = 0
         self.packets_per_rtt = 0
         self.last_timestamp = 0
+        self.retransmissions = 0
+        self.fast_retransmissions = 0
         self.transactions = []
         self.cwnd_list = []
         self.handshake = False
@@ -81,19 +83,30 @@ class Flow:
     def next_rtt(self):
         self.next_expected_rtt += self.rtt
 
+    def increment_retransmissions(self):
+        self.retransmissions += 1
+
+    def increment_fast_retransmissions(self):
+        self.fast_retransmissions += 1
+
     def __str__(self):
         """String Representation of Flow with first two Transactions"""
         trans_str = ""
         for i in range(2):
             trans_str = trans_str + "Transaction " + str(i + 1) + ":\n" \
                         + str(self.transactions[i]) + "\n"
-        return "Flow " + str(self.flow_id) + ": \n" + trans_str + "Throughput: " + str(self.throughput) + " bytes/sec\n"
+        return "Flow " + str(self.flow_id) + ": (" + str(int.from_bytes(self.sender_port, "big")) + " -> " \
+               + str(int.from_bytes(self.receiver_port, "big")) + ")\n" + trans_str + "Throughput: " \
+               + str(self.throughput) + " bytes/sec\n"
 
 
 class Transaction:
-    def __init__(self, sent_pkt, recv_pkt=None):
+    def __init__(self, sent_pkt, start_time, rtt, recv_pkt=None):
         self.sent_pkt = sent_pkt
+        self.start_time = start_time
+        self.rto_time = 2 * rtt + start_time
         self.recv_pkt = recv_pkt
+        self.dup_acks = 0
 
     def receive_pkt(self, pkt):
         self.recv_pkt = pkt
@@ -240,7 +253,7 @@ def analysis_pcap_tcp(file_path):
         if src_port == current_flow.sender_port:
             payload_size = len(buffer[66:])
             pkt = Packet(seq, ack, rwnd)
-            transaction = Transaction(pkt)
+            transaction = Transaction(pkt, timestamp, current_flow.rtt)
             seq_map[payload_size + seq] = transaction
             current_flow.add_transaction(transaction)
         # IF RECEIVER, ADD PACKET TO CORRESPONDING TRANSACTION USING MAP
@@ -248,6 +261,22 @@ def analysis_pcap_tcp(file_path):
             transaction = seq_map.get(ack, None)
             if transaction is None:
                 continue
+
+            # KEEP TRACK OF THE AMOUNT OF TIMES THE ACK HAS BEEN RECEIVED
+            transaction.dup_acks += 1
+
+            # IF THE ACK IS RECEIVED 3 TIMES AFTER INITIAL ONE, THEN THERE MUST BE A FAST RETRANSMISSION
+            if transaction.dup_acks == 4:
+                current_flow.increment_fast_retransmissions()
+                transaction.dup_acks = 0
+                continue
+            # IF PACKET RECEIVED AFTER RTO, THERE MUST BE A RETRANSMISSION
+            elif timestamp > transaction.rto_time:
+                current_flow.increment_retransmissions()
+
+            if transaction.dup_acks > 1:
+                continue
+
             transaction.receive_pkt(Packet(seq, ack, rwnd))
 
     # PRINT PART A
@@ -260,16 +289,21 @@ def analysis_pcap_tcp(file_path):
     # PRINT PART B
     print("\nPART B\n")
 
-    print("Estimations of first 5 (or less) congestion windows for each flow:\n")
     for flow in flow_list:
         window = 1
-        print("Flow " + str(flow.flow_id) + ": ")
+        print("Flow " + str(flow.flow_id) + ": (" + str(int.from_bytes(flow.sender_port, "big")) + " -> "
+              + str(int.from_bytes(flow.receiver_port, "big")))
         for i in range(5):
             if flow.cwnd_list[i] is None:
                 break
             print("CWND " + str(window) + ": " + str(flow.cwnd_list[i]))
             window += 1
+        print("Retransmissions from Triple Duplicate ACKs: " + str(flow.fast_retransmissions))
+        print("Retransmissions from Timeouts: " + str(flow.retransmissions))
         print()
+
+    # for i in seq_map:
+        # print(seq_map.get(i, None))
 
     # CLOSE FILE AND RETURN
     file.close()
