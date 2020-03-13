@@ -22,7 +22,6 @@ PSH = "PSH"
 ACK_FLAG = 0x10
 ACK = "ACK"
 
-retransmission_count = 0
 
 class Flow:
 
@@ -185,7 +184,6 @@ def get_flags(buffer):
 
 def analysis_pcap_tcp(file_path):
     """Runs analysis on PCAP File"""
-    global retransmission_count
     # OPEN FILE
     try:
         file = open(file_path, 'rb')
